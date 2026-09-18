@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Digital twin - hardware test console</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; font-family: monospace; }
+        #hud { position: absolute; top: 15px; left: 15px; color: #0f0; font-size: 16px; z-index: 100; background: rgba(0, 0, 0, 0.85); border: 1px solid #0f0; padding: 12px; border-radius: 5px; box-shadow: 0 0 10px #0f05; pointer-events: none; }
+        #calibration-panel { position: absolute; bottom: 20px; left: 20px; background: rgba(0, 20, 0, 0.95); border: 1px solid #0f0; padding: 12px; color: #0f0; z-index: 100; border-radius: 6px; box-shadow: 0 0 15px #0f05; width: 320px; max-height: 85vh; overflow-y: auto; }
+        details { background: rgba(0, 30, 0, 0.8); border: 1px solid #0f0; border-radius: 4px; margin-top: 8px; padding: 8px; }
+        summary { cursor: pointer; color: #0ff; font-weight: bold; outline: none; user-select: none; }
+        .control-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 13px; color: #0f0; }
+        input[type=number] { background: #000; color: #0f0; border: 1px solid #0f0; padding: 4px; width: 70px; font-family: monospace; border-radius: 3px; }
+        input[type=checkbox] { accent-color: #0f0; cursor: pointer; width: 18px; height: 18px; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/DragControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+    <div id="hud">
+        Hardware link active<br>
+        Gas/brake: w/s or mpu tilt<br>
+        Steering: a/d or mpu twist<br>
+        <span style="color: #ffaa00;">Press 'r' to zero sensor</span><br>
+        <span style="color: #ffaa00;">Press 'c' to focus camera</span><br>
+        <span id="telemetryData" style="color: #0ff;">Waiting for esp32...</span>
+    </div>
+    <div id="calibration-panel">
+        <b style="color: #fff; display: block; margin-bottom: 4px;">System control menu</b>
+        <details>
+            <summary>[Option 1] Reference box</summary>
+            <div class="control-row"><label>Enable mouse drag:</label><input type="checkbox" id="dragToggle"></div>
+            <div class="control-row"><label>Cube size (m):</label><input type="number" id="refSizeInput" step="0.1" value="1.0"></div>
+        </details>
+        <details>
+            <summary>[Option 2] Course scale</summary>
+            <div class="control-row"><label>Model multiplier (x):</label><input type="number" id="courseScaleInput" step="0.001" value="1.000"></div>
+        </details>
+        <details open>
+            <summary>[Option 3] Truck settings & teleport</summary>
+            <div class="control-row" style="background: rgba(0,255,0,0.2); padding: 4px; border-radius: 4px;">
+                <label style="color: #fff; font-weight: bold;">Enable mpu gas (pitch):</label>
+                <input type="checkbox" id="accelToggle">
+            </div>
+            <div class="control-row"><label>Truck scale (x):</label><input type="number" id="truckScaleInput" step="0.1" value="1.0"></div>
+            <div class="control-row"><label>Teleport x (m):</label><input type="number" id="truckXInput" step="10" value="0"></div>
+            <div class="control-row"><label>Teleport z (m):</label><input type="number" id="truckZInput" step="10" value="0"></div>
+        </details>
+    </div>
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; 
+        controls.zoomSpeed = 1.5;
+        controls.minDistance = 2;
+        controls.maxDistance = 1500;
+        scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(100, 150, 100);
+        scene.add(dirLight);
+        camera.position.set(0, 15, 30);
+        const refGeo = new THREE.BoxGeometry(1, 1, 1);
+        const refMat = new THREE.MeshStandardMaterial({ color: 0x00ff00, wireframe: true });
+        const meterCube = new THREE.Mesh(refGeo, refMat);
+        meterCube.position.set(0, 0.5, 0); 
+        scene.add(meterCube);
+        const dragControls = new THREE.DragControls([meterCube], camera, renderer.domElement);
+        dragControls.enabled = false; 
+        document.getElementById('dragToggle').addEventListener('change', (e) => { dragControls.enabled = e.target.checked; });
+        dragControls.addEventListener('dragstart', () => { controls.enabled = false; refMat.color.setHex(0xffaa00); });
+        dragControls.addEventListener('dragend', () => { controls.enabled = true; refMat.color.setHex(0x00ff00); });
+        let loadedCourse = null;
+        new THREE.GLTFLoader().load('course.glb', function (gltf) {
+            loadedCourse = gltf.scene;
+            scene.add(loadedCourse);
+        });
+        document.getElementById('courseScaleInput').addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            if (!isNaN(val) && loadedCourse) loadedCourse.scale.set(val, val, val);
+        });
+        const truckGroup = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.BoxGeometry(1, 0.6, 1.5), new THREE.MeshStandardMaterial({ color: 0xffcc00 }));
+        body.position.y = 0.3; 
+        truckGroup.add(body);
+        scene.add(truckGroup);
+        document.getElementById('truckScaleInput').addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            if (!isNaN(val)) truckGroup.scale.set(val, val, val);
+        });
+        document.getElementById('truckXInput').addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            if (!isNaN(val)) truckGroup.position.x = val;
+        });
+        document.getElementById('truckZInput').addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            if (!isNaN(val)) truckGroup.position.z = val;
+        });
+        let useAccelForGas = false;
+        document.getElementById('accelToggle').addEventListener('change', (e) => {
+            useAccelForGas = e.target.checked;
+        });
+        const keys = { w: false, a: false, s: false, d: false }; 
+        window.addEventListener('keydown', (e) => { 
+            if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true; 
+            if (e.key.toLowerCase() === 'r') { sensorYawOffset = sensorYaw; keyboardYaw = 0; }
+            if (e.key.toLowerCase() === 'c') { controls.target.copy(truckGroup.position); }
+        });
+        window.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; });
+        let sensorYaw = 0;   
+        let sensorPitch = 0;
+        let keyboardYaw = 0; 
+        let sensorYawOffset = 0; 
+        const socket = new WebSocket("ws://" + window.location.host + "/ws");
+        socket.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.yaw !== undefined) sensorYaw = data.yaw; 
+                if (data.pitch !== undefined) sensorPitch = data.pitch;
+                document.getElementById("telemetryData").innerText = `Yaw: ${(sensorYaw - sensorYawOffset).toFixed(1)}° | Pitch: ${sensorPitch.toFixed(1)}°`;
+            } catch (err) {}
+        };
+        const raycaster = new THREE.Raycaster();
+        const downVector = new THREE.Vector3(0, -1, 0);
+        const upVector = new THREE.Vector3(0, 1, 0); 
+        function animate() {
+            requestAnimationFrame(animate);
+            let speed = 0;
+            if (useAccelForGas) {
+                if (sensorPitch > 10) speed = Math.min(0.2, 0.2 * ((sensorPitch - 10) / 40)); 
+                else if (sensorPitch < -10) speed = Math.max(-0.1, -0.1 * ((Math.abs(sensorPitch) - 10) / 40)); 
+            } else {
+                if (keys.w) speed = 0.15;
+                if (keys.s) speed = -0.15;
+            }
+            truckGroup.translateZ(-speed); 
+            const turnSpeed = 0.04;
+            if (keys.a) keyboardYaw += turnSpeed;
+            if (keys.d) keyboardYaw -= turnSpeed;
+            const activeSensorYaw = sensorYaw - sensorYawOffset;
+            const totalYaw = keyboardYaw - (activeSensorYaw * (Math.PI / 180));
+            if (loadedCourse) {
+                const origin = truckGroup.position.clone();
+                origin.y = 1000; 
+                raycaster.set(origin, downVector);
+                const intersects = raycaster.intersectObject(loadedCourse, true);
+                if (intersects.length > 0) {
+                    const hit = intersects[0];
+                    truckGroup.position.y = hit.point.y;
+                    const surfaceNormal = hit.face.normal.clone();
+                    surfaceNormal.transformDirection(hit.object.matrixWorld); 
+                    const alignToSlope = new THREE.Quaternion().setFromUnitVectors(upVector, surfaceNormal);
+                    const steeringRotation = new THREE.Quaternion().setFromAxisAngle(upVector, totalYaw);
+                    alignToSlope.multiply(steeringRotation);
+                    truckGroup.quaternion.copy(alignToSlope);
+                } else {
+                    truckGroup.rotation.set(0, totalYaw, 0);
+                }
+            } else {
+                truckGroup.rotation.set(0, totalYaw, 0);
+            }
+            controls.update(); 
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
