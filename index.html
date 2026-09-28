@@ -1,16 +1,30 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Digital twin - hardware test console</title>
+    <title>Digital twin console</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #111; font-family: monospace; }
-        #hud { position: absolute; top: 15px; left: 15px; color: #0f0; font-size: 16px; z-index: 100; background: rgba(0, 0, 0, 0.85); border: 1px solid #0f0; padding: 12px; border-radius: 5px; box-shadow: 0 0 10px #0f05; pointer-events: none; }
-        #calibration-panel { position: absolute; bottom: 20px; left: 20px; background: rgba(0, 20, 0, 0.95); border: 1px solid #0f0; padding: 12px; color: #0f0; z-index: 100; border-radius: 6px; box-shadow: 0 0 15px #0f05; width: 320px; max-height: 85vh; overflow-y: auto; }
+        #hud { position: absolute; top: 15px; left: 15px; color: #0f0; font-size: 16px; z-index: 100; background: rgba(0, 0, 0, 0.85); border: 1px solid #0f0; padding: 12px; border-radius: 5px; pointer-events: none; }
+        #calibration-panel { position: absolute; bottom: 20px; left: 20px; background: rgba(0, 20, 0, 0.95); border: 1px solid #0f0; padding: 12px; color: #0f0; z-index: 100; border-radius: 6px; width: 340px; max-height: 85vh; overflow-y: auto; }
+        #hardware-check { position: absolute; top: 15px; right: 15px; background: rgba(0, 20, 0, 0.95); border: 1px solid #0f0; padding: 12px; color: #0f0; z-index: 100; border-radius: 6px; width: 220px; }
+        
+        #proximity-panel { position: absolute; bottom: 20px; right: 20px; background: rgba(0, 20, 0, 0.95); border: 1px solid #0f0; padding: 12px; color: #0f0; z-index: 100; border-radius: 6px; width: 250px; display: none; }
+        .alarm-active { border: 1px solid #ff3333 !important; background: rgba(50, 0, 0, 0.95) !important; }
+
         details { background: rgba(0, 30, 0, 0.8); border: 1px solid #0f0; border-radius: 4px; margin-top: 8px; padding: 8px; }
         summary { cursor: pointer; color: #0ff; font-weight: bold; outline: none; user-select: none; }
         .control-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 13px; color: #0f0; }
-        input[type=number] { background: #000; color: #0f0; border: 1px solid #0f0; padding: 4px; width: 70px; font-family: monospace; border-radius: 3px; }
-        input[type=checkbox] { accent-color: #0f0; cursor: pointer; width: 18px; height: 18px; }
+        input[type="number"] { background: #000; color: #0f0; border: 1px solid #0f0; padding: 4px; width: 70px; font-family: monospace; border-radius: 3px; }
+        input[type="checkbox"], input[type="range"] { accent-color: #0f0; cursor: pointer; }
+        input[type="checkbox"] { width: 18px; height: 18px; }
+        select { background: #000; color: #0f0; border: 1px solid #0f0; font-family: monospace; padding: 2px; outline: none; }
+        
+        .btn-download { width: 100%; background: #0f0; color: #000; font-family: monospace; font-weight: bold; font-size: 14px; border: none; padding: 6px; cursor: pointer; border-radius: 4px; margin-top: 8px; }
+        .btn-download:hover { background: #0c0; }
+        .btn-replay { background: #ff0; width: 48%; }
+        .btn-replay:hover { background: #cc0; }
+        .btn-stop { background: #f33; color:#fff; width: 48%; }
+        .btn-stop:hover { background: #c00; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -19,154 +33,876 @@
 </head>
 <body>
     <div id="hud">
-        Hardware link active<br>
-        Gas/brake: w/s or mpu tilt<br>
-        Steering: a/d or mpu twist<br>
-        <span style="color: #ffaa00;">Press 'r' to zero sensor</span><br>
-        <span style="color: #ffaa00;">Press 'c' to focus camera</span><br>
-        <span id="telemetryData" style="color: #0ff;">Waiting for esp32...</span>
+        Team Vyasa Development interface<br>
+        <span id="telemetryData" style="color: #0ff;"></span>
     </div>
+    
+    <div id="hardware-check">
+        <details>
+            <summary>Hardware check</summary>
+            <div class="control-row">Esp32 connection: <span id="espStatus" style="color: #ff3333;">Offline</span></div>
+            <div class="control-row">Mpu6500 connection: <span id="mpuStatus" style="color: #ff3333;">Offline</span></div>
+            <div class="control-row">RTK GPS Status: <span id="rtkStatus" style="color: #ff3333;">Offline</span></div>
+        </details>
+    </div>
+    
     <div id="calibration-panel">
         <b style="color: #fff; display: block; margin-bottom: 4px;">System control menu</b>
         <details>
-            <summary>[Option 1] Reference box</summary>
+            <summary>[option 1] reference tools</summary>
             <div class="control-row"><label>Enable mouse drag:</label><input type="checkbox" id="dragToggle"></div>
             <div class="control-row"><label>Cube size (m):</label><input type="number" id="refSizeInput" step="0.1" value="1.0"></div>
         </details>
         <details>
-            <summary>[Option 2] Course scale</summary>
+            <summary>[option 2] course scale</summary>
             <div class="control-row"><label>Model multiplier (x):</label><input type="number" id="courseScaleInput" step="0.001" value="1.000"></div>
         </details>
         <details open>
-            <summary>[Option 3] Truck settings & teleport</summary>
-            <div class="control-row" style="background: rgba(0,255,0,0.2); padding: 4px; border-radius: 4px;">
-                <label style="color: #fff; font-weight: bold;">Enable mpu gas (pitch):</label>
+            <summary>[option 3] truck controls & rtk</summary>
+            <div class="control-row">
+                <label>Active truck:</label>
+                <select id="activeTruckSelect">
+                    <option value="1">Truck 1</option>
+                    <option value="2">Truck 2</option>
+                </select>
+            </div>
+            <div class="control-row">
+                <label>Control Mode:</label>
+                <select id="controlModeSelect">
+                    <option value="manual">Hardware</option>
+                    <option value="rtk_mock">Mock Data</option>
+                </select>
+            </div>
+            <div class="control-row">
+                <label>Manual speed (m/s):</label>
+                <input type="number" id="manualSpeedInput" step="1" value="10">
+            </div>
+            <div class="control-row" style="background: rgba(0,255,0,0.2); padding: 4px; border-radius: 4px; margin-top:12px;">
+                <label style="color: #fff; font-weight: bold;">Enable mpu gas:</label>
                 <input type="checkbox" id="accelToggle">
             </div>
             <div class="control-row"><label>Truck scale (x):</label><input type="number" id="truckScaleInput" step="0.1" value="1.0"></div>
             <div class="control-row"><label>Teleport x (m):</label><input type="number" id="truckXInput" step="10" value="0"></div>
             <div class="control-row"><label>Teleport z (m):</label><input type="number" id="truckZInput" step="10" value="0"></div>
         </details>
+        
+        <details>
+            <summary>[option 4] safety systems</summary>
+            <div class="control-row" style="background: rgba(100,100,100,0.2); padding: 4px; border-radius: 4px;">
+                <label style="color: #fff;">Enable dense fog:</label>
+                <input type="checkbox" id="fogToggle">
+            </div>
+            <div class="control-row">
+                <label>Fog visibility (m):</label>
+                <input type="number" id="fogVisibilityInput" step="1" value="50">
+            </div>
+            <div class="control-row">
+                <label>Show radar UI:</label>
+                <input type="checkbox" id="proxToggle">
+            </div>
+            <div class="control-row">
+                <label>Alarm range (m):</label>
+                <input type="number" id="proxRangeInput" step="5" value="50">
+            </div>
+            <div class="control-row">
+                <label>Level tolerance (m):</label>
+                <input type="number" id="levelToleranceInput" step="1" value="10">
+            </div>
+        </details>
+
+        <details>
+            <summary>[option 5] environment obstacles</summary>
+            <div class="control-row">
+                <label>Dbl-click to spawn object:</label>
+                <input type="checkbox" id="genObstacleToggle">
+            </div>
+            <div class="control-row">
+                <label>Dbl-click to delete object:</label>
+                <input type="checkbox" id="delObstacleToggle">
+            </div>
+            <div class="control-row">
+                <label>Spawn size (m):</label>
+                <input type="number" id="obstacleSizeInput" step="1" value="2">
+            </div>
+        </details>
+
+        <details>
+            <summary>[option 6] logger & replay</summary>
+            <div class="control-row">
+                <label style="color:#0ff">Record telemetry:</label>
+                <input type="checkbox" id="recordToggle">
+            </div>
+            <div class="control-row" style="justify-content: center;">
+                <span id="logStatus" style="color: #aaa;">Status: Standing by</span>
+            </div>
+            <button id="downloadLogBtn" class="btn-download">Download CSV</button>
+            
+            <hr style="border-color: #0f0; margin: 12px 0;">
+            
+            <div class="control-row">
+                <label style="color:#ff0">Load replay:</label>
+                <input type="file" id="csvFileInput" accept=".csv" style="width: 140px; color:#fff; font-size: 11px;">
+            </div>
+            <div class="control-row">
+                <button id="playReplayBtn" class="btn-download btn-replay">Play</button>
+                <button id="stopReplayBtn" class="btn-download btn-stop">Stop</button>
+            </div>
+            <input type="range" id="replayScrubber" min="0" max="100" value="0" style="width:100%; margin-top:12px;" disabled>
+        </details>
     </div>
+
+    <!-- UPDATED: Proximity Panel with separate Peer and Obstacle tracking -->
+    <div id="proximity-panel">
+        <b style="color: #fff; display: block; margin-bottom: 4px;">Safety systems</b>
+        <details open>
+            <summary>Proximity radar</summary>
+            <div class="control-row" style="font-size: 15px;">
+                Status: <span id="proxStatus" style="color: #00ff00; font-weight: bold;">CLEAR</span>
+            </div>
+            <div class="control-row">
+                Nearest peer: <span id="peerDistance" style="color: #0ff;">-- m</span>
+            </div>
+            <div class="control-row">
+                Nearest obstacle: <span id="obsDistance" style="color: #0ff;">-- m</span>
+            </div>
+        </details>
+    </div>
+
     <script>
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-        const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true; 
-        controls.zoomSpeed = 1.5;
-        controls.minDistance = 2;
-        controls.maxDistance = 1500;
-        scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        dirLight.position.set(100, 150, 100);
-        scene.add(dirLight);
-        camera.position.set(0, 15, 30);
-        const refGeo = new THREE.BoxGeometry(1, 1, 1);
-        const refMat = new THREE.MeshStandardMaterial({ color: 0x00ff00, wireframe: true });
-        const meterCube = new THREE.Mesh(refGeo, refMat);
-        meterCube.position.set(0, 0.5, 0); 
-        scene.add(meterCube);
-        const dragControls = new THREE.DragControls([meterCube], camera, renderer.domElement);
-        dragControls.enabled = false; 
-        document.getElementById('dragToggle').addEventListener('change', (e) => { dragControls.enabled = e.target.checked; });
-        dragControls.addEventListener('dragstart', () => { controls.enabled = false; refMat.color.setHex(0xffaa00); });
-        dragControls.addEventListener('dragend', () => { controls.enabled = true; refMat.color.setHex(0x00ff00); });
-        let loadedCourse = null;
-        new THREE.GLTFLoader().load('course.glb', function (gltf) {
-            loadedCourse = gltf.scene;
-            scene.add(loadedCourse);
-        });
-        document.getElementById('courseScaleInput').addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            if (!isNaN(val) && loadedCourse) loadedCourse.scale.set(val, val, val);
-        });
-        const truckGroup = new THREE.Group();
-        const body = new THREE.Mesh(new THREE.BoxGeometry(1, 0.6, 1.5), new THREE.MeshStandardMaterial({ color: 0xffcc00 }));
-        body.position.y = 0.3; 
-        truckGroup.add(body);
-        scene.add(truckGroup);
-        document.getElementById('truckScaleInput').addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            if (!isNaN(val)) truckGroup.scale.set(val, val, val);
-        });
-        document.getElementById('truckXInput').addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            if (!isNaN(val)) truckGroup.position.x = val;
-        });
-        document.getElementById('truckZInput').addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            if (!isNaN(val)) truckGroup.position.z = val;
-        });
-        let useAccelForGas = false;
-        document.getElementById('accelToggle').addEventListener('change', (e) => {
-            useAccelForGas = e.target.checked;
-        });
-        const keys = { w: false, a: false, s: false, d: false }; 
-        window.addEventListener('keydown', (e) => { 
-            if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true; 
-            if (e.key.toLowerCase() === 'r') { sensorYawOffset = sensorYaw; keyboardYaw = 0; }
-            if (e.key.toLowerCase() === 'c') { controls.target.copy(truckGroup.position); }
-        });
-        window.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; });
-        let sensorYaw = 0;   
-        let sensorPitch = 0;
-        let keyboardYaw = 0; 
-        let sensorYawOffset = 0; 
-        const socket = new WebSocket("ws://" + window.location.host + "/ws");
-        socket.onmessage = function(event) {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.yaw !== undefined) sensorYaw = data.yaw; 
-                if (data.pitch !== undefined) sensorPitch = data.pitch;
-                document.getElementById("telemetryData").innerText = `Yaw: ${(sensorYaw - sensorYawOffset).toFixed(1)}° | Pitch: ${sensorPitch.toFixed(1)}°`;
-            } catch (err) {}
-        };
-        const raycaster = new THREE.Raycaster();
-        const downVector = new THREE.Vector3(0, -1, 0);
-        const upVector = new THREE.Vector3(0, 1, 0); 
-        function animate() {
-            requestAnimationFrame(animate);
-            let speed = 0;
-            if (useAccelForGas) {
-                if (sensorPitch > 10) speed = Math.min(0.2, 0.2 * ((sensorPitch - 10) / 40)); 
-                else if (sensorPitch < -10) speed = Math.max(-0.1, -0.1 * ((Math.abs(sensorPitch) - 10) / 40)); 
-            } else {
-                if (keys.w) speed = 0.15;
-                if (keys.s) speed = -0.15;
+        class GeoSystem {
+            static ORIGIN_LAT = 12.5186; 
+            static ORIGIN_LON = 74.9899;
+            static EARTH_RADIUS = 6378137; 
+
+            static latLonToLocal(lat, lon) {
+                const x = this.EARTH_RADIUS * (lon - this.ORIGIN_LON) * (Math.PI / 180) * Math.cos(this.ORIGIN_LAT * Math.PI / 180);
+                const z = -this.EARTH_RADIUS * (lat - this.ORIGIN_LAT) * (Math.PI / 180);
+                return { x, z };
             }
-            truckGroup.translateZ(-speed); 
-            const turnSpeed = 0.04;
-            if (keys.a) keyboardYaw += turnSpeed;
-            if (keys.d) keyboardYaw -= turnSpeed;
-            const activeSensorYaw = sensorYaw - sensorYawOffset;
-            const totalYaw = keyboardYaw - (activeSensorYaw * (Math.PI / 180));
-            if (loadedCourse) {
-                const origin = truckGroup.position.clone();
-                origin.y = 1000; 
-                raycaster.set(origin, downVector);
-                const intersects = raycaster.intersectObject(loadedCourse, true);
-                if (intersects.length > 0) {
-                    const hit = intersects[0];
-                    truckGroup.position.y = hit.point.y;
-                    const surfaceNormal = hit.face.normal.clone();
-                    surfaceNormal.transformDirection(hit.object.matrixWorld); 
-                    const alignToSlope = new THREE.Quaternion().setFromUnitVectors(upVector, surfaceNormal);
-                    const steeringRotation = new THREE.Quaternion().setFromAxisAngle(upVector, totalYaw);
-                    alignToSlope.multiply(steeringRotation);
-                    truckGroup.quaternion.copy(alignToSlope);
-                } else {
-                    truckGroup.rotation.set(0, totalYaw, 0);
-                }
-            } else {
-                truckGroup.rotation.set(0, totalYaw, 0);
+
+            static parseGGA(gga) {
+                const parts = gga.split(',');
+                if (parts[0] !== '$GPGGA' || parts.length < 10) return null;
+                
+                const latRaw = parts[2], latDir = parts[3];
+                const lonRaw = parts[4], lonDir = parts[5];
+                if(!latRaw || !lonRaw) return null;
+
+                let lat = parseInt(latRaw.substring(0, 2)) + (parseFloat(latRaw.substring(2)) / 60);
+                if (latDir === 'S') lat = -lat;
+
+                let lon = parseInt(lonRaw.substring(0, 3)) + (parseFloat(lonRaw.substring(3)) / 60);
+                if (lonDir === 'W') lon = -lon;
+
+                return { lat, lon };
             }
-            controls.update(); 
-            renderer.render(scene, camera);
         }
-        animate();
+
+        class TruckEntity {
+            constructor(id, startX) {
+                this.id = id;
+                this.group = new THREE.Group();
+                this.group.position.x = startX;
+                
+                this.yaw = 0;
+                this.sensorOffset = 0;
+                
+                this.targetX = startX;
+                this.targetZ = 0;
+                this.prevX = startX;
+                this.prevZ = 0;
+                this.targetYaw = 0;
+                this.prevYaw = 0;
+                this.timeSinceLastUpdate = 0;
+                this.updateInterval = 0.1; 
+                
+                this.targetY = 0;
+                this.targetQuaternion = new THREE.Quaternion();
+                
+                this.lastX = null;
+                this.lastZ = null;
+                this.lastRaycastTime = 0;
+                this.surfaceNormal = new THREE.Vector3(0, 1, 0);
+            }
+
+            teleport(x, z) {
+                this.group.position.set(x, this.group.position.y, z);
+                this.targetX = x;
+                this.targetZ = z;
+                this.prevX = x;
+                this.prevZ = z;
+            }
+
+            setScale(scale) {
+                this.group.scale.set(scale, scale, scale);
+            }
+
+            setTarget(x, z, yaw) {
+                this.prevX = this.group.position.x;
+                this.prevZ = this.group.position.z;
+                this.prevYaw = this.yaw;
+                
+                this.targetX = x;
+                this.targetZ = z;
+                this.targetYaw = yaw;
+                
+                this.timeSinceLastUpdate = 0;
+            }
+
+            updatePhysics(loadedCourse, raycaster, now, downVector) {
+                const positionChanged = (this.lastX !== this.group.position.x || this.lastZ !== this.group.position.z);
+                
+                if (positionChanged && (now - this.lastRaycastTime > 66)) {
+                    const origin = this.group.position.clone();
+                    origin.y = 1000; 
+                    raycaster.set(origin, downVector);
+                    const intersects = raycaster.intersectObject(loadedCourse, true);
+                    
+                    if (intersects.length > 0) {
+                        const hit = intersects[0];
+                        this.targetY = hit.point.y;
+                        this.surfaceNormal = hit.face.normal.clone();
+                        this.surfaceNormal.transformDirection(hit.object.matrixWorld); 
+                    }
+                    this.lastX = this.group.position.x;
+                    this.lastZ = this.group.position.z;
+                    this.lastRaycastTime = now;
+                }
+            }
+
+            applySmoothing(lerpFactor, slerpFactor, finalYawQuat, upVector) {
+                const alignToSlope = new THREE.Quaternion().setFromUnitVectors(upVector, this.surfaceNormal);
+                alignToSlope.multiply(finalYawQuat);
+                this.targetQuaternion.copy(alignToSlope);
+
+                this.group.position.y = THREE.MathUtils.lerp(this.group.position.y, this.targetY, lerpFactor);
+                this.group.quaternion.slerp(this.targetQuaternion, slerpFactor);
+            }
+        }
+
+        class EnvironmentManager {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
+                this.camera.position.set(0, 30, 50);
+
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setClearColor(0x111111);
+                document.body.appendChild(this.renderer.domElement);
+
+                this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.zoomSpeed = 1.5;
+                this.controls.minDistance = 2;
+                this.controls.maxDistance = 1500;
+
+                this.setupLighting();
+                
+                this.loadedCourse = null;
+                this.raycaster = new THREE.Raycaster();
+                this.downVector = new THREE.Vector3(0, -1, 0);
+                this.upVector = new THREE.Vector3(0, 1, 0);
+                
+                this.draggableObjects = [];
+                this.obstacles = [];
+                this.allowGenerate = false;
+                this.allowDelete = false;
+                this.obstacleSize = 2.0;
+
+                this.fogEnabled = false;
+                this.fogVisibility = 50.0;
+
+                this.setupReferenceCube();
+                
+                this.loader = new THREE.GLTFLoader();
+                this.cacheBuster = Date.now();
+
+                this.renderer.domElement.addEventListener('dblclick', (e) => this.onDoubleClick(e));
+            }
+
+            setupLighting() {
+                this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+                const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+                dirLight.position.set(100, 150, 100);
+                this.scene.add(dirLight);
+            }
+
+            setupReferenceCube() {
+                const refGeo = new THREE.BoxGeometry(1, 1, 1);
+                const refMat = new THREE.MeshStandardMaterial({ color: 0x00ff00, wireframe: true });
+                this.meterCube = new THREE.Mesh(refGeo, refMat);
+                this.meterCube.position.set(0, 0.5, 0);
+                this.scene.add(this.meterCube);
+                this.draggableObjects.push(this.meterCube);
+                this.initDragControls();
+            }
+
+            initDragControls() {
+                if (this.dragControls) this.dragControls.dispose();
+                this.dragControls = new THREE.DragControls(this.draggableObjects, this.camera, this.renderer.domElement);
+                
+                this.dragControls.addEventListener('dragstart', (e) => { 
+                    this.controls.enabled = false; 
+                    if (e.object.material && e.object.material.color) e.object.material.color.setHex(0xffffff); 
+                });
+                
+                this.dragControls.addEventListener('drag', (e) => {
+                    if (this.loadedCourse && e.object !== this.meterCube) {
+                        const origin = e.object.position.clone();
+                        origin.y = 1000; 
+                        this.raycaster.set(origin, this.downVector);
+                        const intersects = this.raycaster.intersectObject(this.loadedCourse, true);
+                        if (intersects.length > 0) {
+                            const objHeight = e.object.geometry.parameters.height || 1;
+                            e.object.position.y = intersects[0].point.y + (objHeight / 2);
+                        }
+                    }
+                });
+
+                this.dragControls.addEventListener('dragend', (e) => { 
+                    this.controls.enabled = true; 
+                    if (e.object === this.meterCube) {
+                        e.object.material.color.setHex(0x00ff00);
+                    } else if (e.object.material && e.object.material.color) {
+                        e.object.material.color.setHex(0xff5500); 
+                    }
+                });
+
+                const dragToggle = document.getElementById('dragToggle');
+                this.dragControls.enabled = dragToggle ? dragToggle.checked : false;
+            }
+
+            onDoubleClick(event) {
+                if (!this.loadedCourse) return;
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                const mouse = new THREE.Vector2();
+                mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+                this.raycaster.setFromCamera(mouse, this.camera);
+
+                if (this.allowDelete && this.obstacles.length > 0) {
+                    const obsIntersects = this.raycaster.intersectObjects(this.obstacles, true);
+                    if (obsIntersects.length > 0) {
+                        this.removeObstacle(obsIntersects[0].object);
+                        return; 
+                    }
+                }
+
+                if (this.allowGenerate) {
+                    const terrainIntersects = this.raycaster.intersectObject(this.loadedCourse, true);
+                    if (terrainIntersects.length > 0) {
+                        this.spawnObstacle(terrainIntersects[0].point);
+                    }
+                }
+            }
+
+            spawnObstacle(point) {
+                const s = this.obstacleSize;
+                const geo = new THREE.BoxGeometry(s, s, s); 
+                const mat = new THREE.MeshStandardMaterial({ color: 0xff5500 }); 
+                const obstacle = new THREE.Mesh(geo, mat);
+                
+                obstacle.position.copy(point);
+                obstacle.position.y += (s / 2); 
+                this.scene.add(obstacle);
+                this.obstacles.push(obstacle);
+                this.draggableObjects.push(obstacle);
+                this.initDragControls();
+            }
+
+            removeObstacle(mesh) {
+                let obj = mesh;
+                while (obj.parent && obj.parent !== this.scene) {
+                    if (this.obstacles.includes(obj)) break;
+                    obj = obj.parent;
+                }
+                if (!this.obstacles.includes(obj)) obj = mesh;
+                this.scene.remove(obj);
+                this.obstacles = this.obstacles.filter(o => o !== obj);
+                this.draggableObjects = this.draggableObjects.filter(o => o !== obj);
+                this.initDragControls();
+            }
+
+            loadCourse() {
+                this.loader.load('course.glb?v=' + this.cacheBuster, (gltf) => {
+                    this.loadedCourse = gltf.scene;
+                    this.scene.add(this.loadedCourse);
+                }, undefined, () => {});
+            }
+
+            loadTruck(truck1, truck2) {
+                this.scene.add(truck1.group);
+                this.scene.add(truck2.group);
+                this.loader.load('truck.glb?v=' + this.cacheBuster, (gltf) => {
+                    truck1.group.add(gltf.scene);
+                    truck2.group.add(gltf.scene.clone());
+                }, undefined, () => {});
+            }
+
+            updateFog() {
+                if (this.fogEnabled) {
+                    const density = 2.0 / Math.max(0.1, this.fogVisibility);
+                    this.scene.fog = new THREE.FogExp2(0xcccccc, density);
+                    this.renderer.setClearColor(0xcccccc); 
+                } else {
+                    this.scene.fog = null;
+                    this.renderer.setClearColor(0x111111); 
+                }
+            }
+        }
+
+        class AppController {
+            constructor() {
+                this.env = new EnvironmentManager();
+                this.trucks = { 
+                    1: new TruckEntity(1, 0), 
+                    2: new TruckEntity(2, -150) 
+                };
+                
+                this.activeTruckId = 1;
+                this.controlMode = 'manual';
+                this.useAccelForGas = false;
+                this.manualSpeed = 10.0;
+                
+                this.keys = { w: false, a: false, s: false, d: false, arrowup: false, arrowdown: false, arrowleft: false, arrowright: false };
+                this.rtkOffset = { active: false, x: 0, z: 0 };
+                this.sensorYaw = 0;
+                this.sensorPitch = 0;
+                
+                this.alarmRange = 50;
+                this.levelTolerance = 10; 
+
+                this.isRecording = false;
+                this.telemetryLog = [];
+                this.lastRecordTime = 0;
+                this.recordStartTime = 0;
+
+                this.isReplaying = false;
+                this.replayData = [];
+                this.currentReplayFrame = 0;
+                this.replayTimer = 0;
+
+                this.clock = new THREE.Clock();
+                this.init();
+            }
+
+            init() {
+                this.env.loadCourse();
+                this.env.loadTruck(this.trucks[1], this.trucks[2]);
+                this.setupNetwork();
+                this.setupUI();
+                this.setupKeyboard();
+                this.animate();
+            }
+
+            setupNetwork() {
+                const socket = new WebSocket("ws://" + window.location.host + "/ws");
+                socket.onmessage = (event) => {
+                    try {
+                        if (event.data.startsWith("$GPGGA")) {
+                            if (this.controlMode === 'rtk_mock' && !this.isReplaying) {
+                                const coords = GeoSystem.parseGGA(event.data);
+                                if (coords) {
+                                    const rawLocal = GeoSystem.latLonToLocal(coords.lat, coords.lon);
+                                    const t = this.trucks[this.activeTruckId];
+                                    
+                                    if (!this.rtkOffset.active) {
+                                        this.rtkOffset.x = t.group.position.x - rawLocal.x;
+                                        this.rtkOffset.z = t.group.position.z - rawLocal.z;
+                                        this.rtkOffset.active = true;
+                                    }
+
+                                    const newTargetX = rawLocal.x + this.rtkOffset.x;
+                                    const newTargetZ = rawLocal.z + this.rtkOffset.z;
+                                    const dx = newTargetX - t.targetX;
+                                    const dz = newTargetZ - t.targetZ;
+                                    
+                                    let newYaw = t.targetYaw;
+                                    if (Math.abs(dx) > 0.001 || Math.abs(dz) > 0.001) newYaw = Math.atan2(dx, dz);
+                                    
+                                    t.setTarget(newTargetX, newTargetZ, newYaw);
+                                }
+                            }
+                        } else {
+                            const data = JSON.parse(event.data);
+                            if (data.yaw !== undefined) this.sensorYaw = data.yaw; 
+                            if (data.pitch !== undefined) this.sensorPitch = data.pitch;
+                            
+                            if (!this.isReplaying) {
+                                document.getElementById("telemetryData").innerText = `IMU Yaw: ${(this.sensorYaw - this.trucks[this.activeTruckId].sensorOffset).toFixed(1)} | Pitch: ${this.sensorPitch.toFixed(1)}`;
+                            }
+                            document.getElementById("espStatus").innerText = "Online";
+                            document.getElementById("espStatus").style.color = "#00ff00";
+                            document.getElementById("mpuStatus").innerText = "Online";
+                            document.getElementById("mpuStatus").style.color = "#00ff00";
+                        }
+                    } catch (err) {}
+                };
+            }
+
+            setupUI() {
+                document.getElementById('dragToggle').addEventListener('change', (e) => { 
+                    if (this.env.dragControls) this.env.dragControls.enabled = e.target.checked; 
+                });
+                document.getElementById('courseScaleInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && this.env.loadedCourse) this.env.loadedCourse.scale.set(val, val, val);
+                });
+                document.getElementById('truckScaleInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) this.trucks[this.activeTruckId].setScale(val);
+                });
+                document.getElementById('truckXInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) this.trucks[this.activeTruckId].teleport(val, this.trucks[this.activeTruckId].targetZ);
+                });
+                document.getElementById('truckZInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) this.trucks[this.activeTruckId].teleport(this.trucks[this.activeTruckId].targetX, val);
+                });
+                document.getElementById('controlModeSelect').addEventListener('change', (e) => {
+                    this.controlMode = e.target.value;
+                    this.rtkOffset.active = false;
+                    const rtkUi = document.getElementById('rtkStatus');
+                    if (this.controlMode === 'rtk_mock') {
+                        rtkUi.innerText = "Online (Mock)";
+                        rtkUi.style.color = "#00ff00";
+                    } else {
+                        rtkUi.innerText = "Offline";
+                        rtkUi.style.color = "#ff3333";
+                    }
+                });
+                document.getElementById('activeTruckSelect').addEventListener('change', (e) => {
+                    this.activeTruckId = parseInt(e.target.value);
+                    this.rtkOffset.active = false; 
+                });
+                document.getElementById('manualSpeedInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && val >= 0) this.manualSpeed = val;
+                });
+                document.getElementById('accelToggle').addEventListener('change', (e) => { this.useAccelForGas = e.target.checked; });
+                document.getElementById('fogToggle').addEventListener('change', (e) => {
+                    this.env.fogEnabled = e.target.checked;
+                    this.env.updateFog();
+                });
+                document.getElementById('fogVisibilityInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) {
+                        this.env.fogVisibility = val;
+                        this.env.updateFog();
+                    }
+                });
+                document.getElementById('proxToggle').addEventListener('change', (e) => {
+                    document.getElementById('proximity-panel').style.display = e.target.checked ? 'block' : 'none';
+                });
+                document.getElementById('proxRangeInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) this.alarmRange = val;
+                });
+                document.getElementById('levelToleranceInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) this.levelTolerance = val;
+                });
+                document.getElementById('genObstacleToggle').addEventListener('change', (e) => {
+                    this.env.allowGenerate = e.target.checked;
+                });
+                document.getElementById('delObstacleToggle').addEventListener('change', (e) => {
+                    this.env.allowDelete = e.target.checked;
+                });
+                document.getElementById('obstacleSizeInput').addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && val > 0) this.env.obstacleSize = val;
+                });
+
+                document.getElementById('recordToggle').addEventListener('change', (e) => {
+                    this.isRecording = e.target.checked;
+                    const statusText = document.getElementById('logStatus');
+                    if (this.isRecording) {
+                        this.telemetryLog = []; 
+                        this.recordStartTime = Date.now();
+                        statusText.innerText = "Recording...";
+                        statusText.style.color = "#ff3333";
+                    } else {
+                        statusText.innerText = `Stopped. Frames: ${this.telemetryLog.length}`;
+                        statusText.style.color = "#aaa";
+                    }
+                });
+
+                document.getElementById('downloadLogBtn').addEventListener('click', () => {
+                    if (this.telemetryLog.length === 0) {
+                        alert("No data recorded! Toggle 'Record telemetry' first.");
+                        return;
+                    }
+                    let csvContent = "data:text/csv;charset=utf-8,";
+                    csvContent += "Time_sec,T1_X,T1_Y,T1_Z,T1_Yaw,T2_X,T2_Y,T2_Z,T2_Yaw\n";
+                    this.telemetryLog.forEach(row => { csvContent += row.join(",") + "\n"; });
+                    
+                    const encodedUri = encodeURI(csvContent);
+                    const link = document.createElement("a");
+                    link.setAttribute("href", encodedUri);
+                    link.setAttribute("download", "telemetry_log.csv");
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                });
+
+                document.getElementById('csvFileInput').addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const text = event.target.result;
+                        const rows = text.trim().split('\n');
+                        this.replayData = [];
+                        for(let i = 1; i < rows.length; i++) {
+                            const cols = rows[i].split(',').map(Number);
+                            if(cols.length >= 9) this.replayData.push(cols);
+                        }
+                        
+                        const scrubber = document.getElementById('replayScrubber');
+                        scrubber.max = this.replayData.length - 1;
+                        scrubber.value = 0;
+                        scrubber.disabled = false;
+                        
+                        const status = document.getElementById('logStatus');
+                        status.innerText = `Loaded ${this.replayData.length} frames`;
+                        status.style.color = "#ff0";
+                    };
+                    reader.readAsText(file);
+                });
+
+                document.getElementById('playReplayBtn').addEventListener('click', () => {
+                    if (this.replayData.length > 0) {
+                        this.isReplaying = true;
+                        document.getElementById('logStatus').innerText = "Playing back data...";
+                    } else {
+                        alert("Please upload a CSV file first!");
+                    }
+                });
+
+                document.getElementById('stopReplayBtn').addEventListener('click', () => {
+                    this.isReplaying = false;
+                    document.getElementById('logStatus').innerText = "Replay stopped.";
+                    document.getElementById('telemetryData').style.color = "#0ff";
+                });
+
+                document.getElementById('replayScrubber').addEventListener('input', (e) => {
+                    this.currentReplayFrame = parseInt(e.target.value);
+                    if (this.isReplaying === false && this.replayData.length > 0) {
+                        this.applyReplayFrame();
+                    }
+                });
+            }
+
+            setupKeyboard() {
+                window.addEventListener('keydown', (e) => { 
+                    const key = e.key.toLowerCase();
+                    if (this.keys.hasOwnProperty(key)) this.keys[key] = true; 
+                    if (key === 'r') { 
+                        this.trucks[this.activeTruckId].sensorOffset = this.sensorYaw; 
+                        this.trucks[this.activeTruckId].yaw = 0; 
+                    }
+                    if (key === 'c') { 
+                        this.env.controls.target.copy(this.trucks[this.activeTruckId].group.position); 
+                    }
+                });
+                window.addEventListener('keyup', (e) => { 
+                    const key = e.key.toLowerCase();
+                    if (this.keys.hasOwnProperty(key)) this.keys[key] = false; 
+                });
+            }
+
+            applyReplayFrame() {
+                if (this.currentReplayFrame < this.replayData.length) {
+                    const row = this.replayData[this.currentReplayFrame];
+                    this.trucks[1].setTarget(row[1], row[3], row[4]);
+                    this.trucks[2].setTarget(row[5], row[7], row[8]);
+                }
+            }
+
+            // UPDATED: Segregating Peer Tracking and Local Radar (Obstacle) Tracking
+            checkProximity() {
+                const activeT = this.trucks[this.activeTruckId].group.position;
+                
+                // 1. Peer Check (Always connected via network)
+                const otherTId = this.activeTruckId === 1 ? 2 : 1;
+                const otherT = this.trucks[otherTId].group.position;
+                const peerDist = activeT.distanceTo(otherT);
+                const peerVertDiff = Math.abs(activeT.y - otherT.y);
+
+                // 2. Obstacle Check (Local radar pings only)
+                let minObsDist = Infinity;
+                let minObsVertDiff = Infinity;
+                for (const obs of this.env.obstacles) {
+                    const dist = activeT.distanceTo(obs.position);
+                    if (dist < minObsDist) {
+                        minObsDist = dist;
+                        minObsVertDiff = Math.abs(activeT.y - obs.position.y);
+                    }
+                }
+                
+                let alarmTriggered = false;
+                let diffLevelSafe = false;
+
+                // Evaluate Peer
+                if (peerDist <= this.alarmRange) {
+                    if (peerVertDiff <= this.levelTolerance) alarmTriggered = true; 
+                    else if (!alarmTriggered) diffLevelSafe = true; 
+                }
+
+                // Evaluate Obstacles
+                if (minObsDist <= this.alarmRange) {
+                    if (minObsVertDiff <= this.levelTolerance) alarmTriggered = true; 
+                    else if (!alarmTriggered) diffLevelSafe = true; 
+                }
+                
+                const proxStatus = document.getElementById('proxStatus');
+                const peerDistanceSpan = document.getElementById('peerDistance');
+                const obsDistanceSpan = document.getElementById('obsDistance');
+                const proxPanel = document.getElementById('proximity-panel');
+
+                // Update Peer (Always displays because it's a known network node)
+                peerDistanceSpan.innerText = peerDist.toFixed(1) + " m";
+
+                // Update Obstacle (Only displays if it breaches local radar range)
+                if (minObsDist <= this.alarmRange) {
+                    obsDistanceSpan.innerText = minObsDist.toFixed(1) + " m";
+                } else {
+                    obsDistanceSpan.innerText = "-- m";
+                }
+
+                // Update Status UI
+                if (alarmTriggered) {
+                    proxStatus.innerText = `ALARM! < ${this.alarmRange}m`;
+                    proxStatus.style.color = "#ff3333";
+                    proxPanel.classList.add('alarm-active');
+                } else if (diffLevelSafe) {
+                    proxStatus.innerText = "SAFE (Diff Level)";
+                    proxStatus.style.color = "#ffff00"; 
+                    proxPanel.classList.remove('alarm-active');
+                } else {
+                    proxStatus.innerText = "CLEAR";
+                    proxStatus.style.color = "#00ff00";
+                    proxPanel.classList.remove('alarm-active');
+                }
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                const dt = this.env.clock ? this.env.clock.getDelta() : this.clock.getDelta();
+                const now = Date.now();
+
+                if (this.isReplaying && this.replayData.length > 0) {
+                    this.replayTimer += dt;
+                    if (this.replayTimer > 0.1) { 
+                        this.currentReplayFrame++;
+                        this.replayTimer = 0;
+                        if (this.currentReplayFrame >= this.replayData.length) {
+                            this.isReplaying = false; 
+                            document.getElementById('logStatus').innerText = "Replay finished.";
+                            document.getElementById('telemetryData').style.color = "#0ff";
+                        } else {
+                            document.getElementById('replayScrubber').value = this.currentReplayFrame;
+                            this.applyReplayFrame();
+                        }
+                    }
+                    
+                    document.getElementById("telemetryData").innerText = `[ REPLAY MODE ] Frame: ${this.currentReplayFrame} / ${this.replayData.length}`;
+                    document.getElementById("telemetryData").style.color = "#ff0";
+                }
+                
+                const lerpYFactor = 1 - Math.exp(-8 * dt); 
+                const slerpFactor = 1 - Math.exp(-12 * dt);
+                
+                [1, 2].forEach(id => {
+                    const t = this.trucks[id];
+                    
+                    const isRTK = (this.controlMode === 'rtk_mock' && id === this.activeTruckId);
+
+                    if (this.isReplaying || isRTK) {
+                        t.timeSinceLastUpdate += dt;
+                        let alpha = t.timeSinceLastUpdate / t.updateInterval;
+                        if (alpha > 1.0) alpha = 1.0; 
+
+                        t.group.position.x = t.prevX + (t.targetX - t.prevX) * alpha;
+                        t.group.position.z = t.prevZ + (t.targetZ - t.prevZ) * alpha;
+                        
+                        let yawDiff = t.targetYaw - t.prevYaw;
+                        if (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
+                        if (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
+                        t.yaw = t.prevYaw + yawDiff * alpha;
+
+                    } else {
+                        let speed = 0;
+                        const turnSpeed = 2.0;
+
+                        if (this.useAccelForGas && id === this.activeTruckId) {
+                            if (this.sensorPitch > 10) speed = Math.min(this.manualSpeed, this.manualSpeed * ((this.sensorPitch - 10) / 40)); 
+                            else if (this.sensorPitch < -10) speed = Math.max(-this.manualSpeed / 2, (-this.manualSpeed / 2) * ((Math.abs(this.sensorPitch) - 10) / 40)); 
+                        } else {
+                            if (id === 1) {
+                                if (this.keys.w) speed = this.manualSpeed; 
+                                if (this.keys.s) speed = -this.manualSpeed;
+                                if (this.keys.a) t.yaw += turnSpeed * dt;
+                                if (this.keys.d) t.yaw -= turnSpeed * dt;
+                            } else if (id === 2) {
+                                if (this.keys.arrowup) speed = this.manualSpeed; 
+                                if (this.keys.arrowdown) speed = -this.manualSpeed;
+                                if (this.keys.arrowleft) t.yaw += turnSpeed * dt;
+                                if (this.keys.arrowright) t.yaw -= turnSpeed * dt;
+                            }
+                        }
+                        
+                        t.group.translateZ(speed * dt); 
+                        t.targetX = t.group.position.x;
+                        t.targetZ = t.group.position.z;
+                        t.prevX = t.targetX;
+                        t.prevZ = t.targetZ;
+                        t.prevYaw = t.yaw;
+                    }
+
+                    const activeSensorYaw = (id === this.activeTruckId && this.controlMode === 'manual' && !this.isReplaying) ? (this.sensorYaw - t.sensorOffset) : 0;
+                    const totalYaw = t.yaw - (activeSensorYaw * (Math.PI / 180));
+                    const finalYawQuat = new THREE.Quaternion().setFromAxisAngle(this.env.upVector, totalYaw);
+                    
+                    if (this.env.loadedCourse) {
+                        t.updatePhysics(this.env.loadedCourse, this.env.raycaster, now, this.env.downVector);
+                        t.applySmoothing(lerpYFactor, slerpFactor, finalYawQuat, this.env.upVector);
+                    } else {
+                        t.group.rotation.set(0, totalYaw, 0);
+                    }
+                });
+
+                this.checkProximity();
+
+                if (this.isRecording && (now - this.lastRecordTime > 100)) { 
+                    const elapsed = ((now - this.recordStartTime) / 1000).toFixed(2);
+                    this.telemetryLog.push([
+                        elapsed,
+                        this.trucks[1].group.position.x.toFixed(3),
+                        this.trucks[1].group.position.y.toFixed(3),
+                        this.trucks[1].group.position.z.toFixed(3),
+                        this.trucks[1].yaw.toFixed(3),
+                        this.trucks[2].group.position.x.toFixed(3),
+                        this.trucks[2].group.position.y.toFixed(3),
+                        this.trucks[2].group.position.z.toFixed(3),
+                        this.trucks[2].yaw.toFixed(3)
+                    ]);
+                    this.lastRecordTime = now;
+                    document.getElementById('logStatus').innerText = `Recording: ${this.telemetryLog.length} frames`;
+                }
+
+                this.env.controls.update(); 
+                this.env.renderer.render(this.env.scene, this.env.camera);
+            }
+        }
+
+        window.onload = () => {
+            const app = new AppController();
+        };
     </script>
 </body>
 </html>
